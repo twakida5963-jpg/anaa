@@ -1,6 +1,8 @@
 name: Build ANA Award Monitor for macOS
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
