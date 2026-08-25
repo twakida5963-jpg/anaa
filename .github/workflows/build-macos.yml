@@ -63,16 +63,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -q 'final class BrowserWebContainer: NSView' Sources/ANAWatcher/App.swift
-          grep -q 'webView.leadingAnchor.constraint(equalTo: leadingAnchor)' Sources/ANAWatcher/App.swift
-          grep -q 'webView.trailingAnchor.constraint(equalTo: trailingAnchor)' Sources/ANAWatcher/App.swift
-          grep -q 'webView.topAnchor.constraint(equalTo: topAnchor)' Sources/ANAWatcher/App.swift
-          grep -q 'webView.bottomAnchor.constraint(equalTo: bottomAnchor)' Sources/ANAWatcher/App.swift
-          grep -q 'BrowserWebContainer(webView: tab.webView)' Sources/ANAWatcher/App.swift
-          grep -q 'func updateNSView(_ nsView: BrowserWebContainer' Sources/ANAWatcher/App.swift
-          grep -q 'context.size' Sources/ANAWatcher/App.swift
-          grep -q 'createWebViewWith configuration:' Sources/ANAWatcher/App.swift
-          grep -q 'return tab.webView' Sources/ANAWatcher/App.swift
+          for needle in \
+            'import AppKit' \
+            'final class BrowserWebContainer: NSView' \
+            'webView.leadingAnchor.constraint(equalTo: leadingAnchor)' \
+            'webView.trailingAnchor.constraint(equalTo: trailingAnchor)' \
+            'webView.topAnchor.constraint(equalTo: topAnchor)' \
+            'webView.bottomAnchor.constraint(equalTo: bottomAnchor)' \
+            'BrowserWebContainer(webView: tab.webView)' \
+            'func updateNSView(_ nsView: BrowserWebContainer' \
+            'BrowserTabView(tab: tab)' \
+            '.id(tab.id)' \
+            '.frame(maxWidth: .infinity, maxHeight: .infinity)' \
+            '.clipped()' \
+            'createWebViewWith configuration:' \
+            'return tab.webView'; do
+            grep -Fq -- "$needle" Sources/ANAWatcher/App.swift
+          done
 
       - name: Create verified archive
         shell: bash
