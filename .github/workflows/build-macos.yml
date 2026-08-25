@@ -79,11 +79,11 @@ jobs:
               ('passengers', 'passenger condition'),
               ('cabin', 'cabin condition'),
           ]
-          assert len(checks) == 50, len(checks)
+          assert len(checks) >= 50, len(checks)
           failed = [label for needle, label in checks if needle not in s]
           if failed:
-              raise SystemExit("50-point QA failed: " + ", ".join(failed))
-          print("50-point static QA: PASS")
+              raise SystemExit("QA failed: " + ", ".join(failed))
+          print(f"Static QA gate: PASS ({len(checks)} checks, >=50 required)")
 
       - name: Build release
         run: swift build -c release --arch arm64 --arch x86_64
