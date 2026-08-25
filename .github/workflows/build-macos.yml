@@ -1,0 +1,43 @@
+name: Build ANA Award Monitor for macOS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build release
+        run: swift build -c release --arch arm64 --arch x86_64
+      - name: Assemble app
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="ANA特典航空券 空席監視.app"
+          rm -rf "$APP"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp ".build/apple/Products/Release/ANAWatcher" "$APP/Contents/MacOS/ANAWatcher"
+          cat > "$APP/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+          <key>CFBundleDisplayName</key><string>ANA特典航空券 空席監視</string>
+          <key>CFBundleExecutable</key><string>ANAWatcher</string>
+          <key>CFBundleIdentifier</key><string>jp.ana-award-monitor.desktop</string>
+          <key>CFBundleName</key><string>ANAWatcher</string>
+          <key>CFBundlePackageType</key><string>APPL</string>
+          <key>CFBundleShortVersionString</key><string>1.0.0</string>
+          <key>CFBundleVersion</key><string>1</string>
+          <key>LSMinimumSystemVersion</key><string>13.0</string>
+          </dict></plist>
+          PLIST
+          chmod +x "$APP/Contents/MacOS/ANAWatcher"
+          codesign --force --deep --sign - "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "ANA特典航空券-空席監視-macOS.zip"
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: ANA-Award-Monitor-macOS
+          path: ANA特典航空券-空席監視-macOS.zip
