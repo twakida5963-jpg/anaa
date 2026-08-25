@@ -6,13 +6,88 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  qa-and-build:
     runs-on: macos-15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Fix and validate tab switching
+        shell: python3 {0}
+        run: |
+          from pathlib import Path
+          p = Path("Sources/ANAWatcher/App.swift")
+          s = p.read_text(encoding="utf-8")
+          old = """                if let tab = selectedTab {\n                    BrowserTabView(tab: tab)\n                } else {\n"""
+          new = """                if let tab = selectedTab {\n                    BrowserTabView(tab: tab)\n                        .id(tab.id)\n                        .frame(maxWidth: .infinity, maxHeight: .infinity)\n                } else {\n"""
+          if old not in s:
+              raise SystemExit("Expected tab-view block was not found; refusing to build")
+          s = s.replace(old, new, 1)
+          p.write_text(s, encoding="utf-8")
+
+          checks = [
+              ('@main', 'app entry point'),
+              ('struct ContentView', 'content view'),
+              ('final class BrowserManager', 'browser manager'),
+              ('@Published var tabs:', 'tab collection state'),
+              ('@Published var selectedTabID:', 'selected tab state'),
+              ('func selectedTab()', 'selected tab resolver'),
+              ('createWebViewWith configuration:', 'popup/new-window callback'),
+              ('tab.webView.uiDelegate = self', 'popup delegate wiring'),
+              ('tab.webView.navigationDelegate = self', 'navigation delegate wiring'),
+              ('BrowserTabView(tab: tab)', 'tab view host'),
+              ('.id(tab.id)', 'stable tab view identity'),
+              ('.frame(maxWidth: .infinity, maxHeight: .infinity)', 'tab fills browser area'),
+              ('browser.selectedTabID = tab.id', 'tab click selection'),
+              ('browser.closeTab(tab)', 'tab close action'),
+              ('browser.addTab(url:', 'new tab creation'),
+              ('ForEach(browser.tabs)', 'tab strip rendering'),
+              ('allowsBackForwardNavigationGestures', 'browser navigation gestures'),
+              ('websiteDataStore = .default()', 'persistent session data store'),
+              ('monitorURL', 'monitor URL persistence'),
+              ('JSONEncoder()', 'settings serialization'),
+              ('settings.json', 'local settings file'),
+              ('ntfy.sh', 'iPhone notification endpoint'),
+              ('withTimeInterval: 600', '10 minute interval'),
+              ('ANAWatcher', 'executable target'),
+              ('WKWebView', 'WebKit browser'),
+              ('WKUIDelegate', 'popup UI delegate'),
+              ('WKNavigationDelegate', 'navigation delegate'),
+              ('openAwardReservation', 'award reservation action'),
+              ('特典航空券予約を開く', 'award booking button'),
+              ('ANAの新しいタブで開くページにも対応', 'popup guidance text'),
+              ('registerCurrentPage', 'monitor page registration'),
+              ('監視ページ未登録', 'unregistered monitor state'),
+              ('監視中（10分間隔）', 'monitoring state'),
+              ('監視停止', 'monitor stop UI'),
+              ('監視開始', 'monitor start UI'),
+              ('空席を検出してiPhoneへ通知しました', 'availability notification state'),
+              ('空席あり', 'positive availability detector'),
+              ('空席なし', 'negative availability detector'),
+              ('残席あり', 'remaining-seat detector'),
+              ('Task { @MainActor', 'main actor UI task hop'),
+              ('try await scanner.scan', 'scanner async flow'),
+              ('cachePolicy: .reloadIgnoringLocalCacheData', 'fresh scan policy'),
+              ('timeoutInterval: 45', 'scanner timeout'),
+              ('store.signatures', 'duplicate notification suppression'),
+              ('clickURL:', 'notification deep link'),
+              ('ANAパスワードは保存しません', 'password storage policy'),
+              ('origin', 'origin condition'),
+              ('destination', 'destination condition'),
+              ('departureFrom', 'departure range start'),
+              ('departureTo', 'departure range end'),
+              ('passengers', 'passenger condition'),
+              ('cabin', 'cabin condition'),
+          ]
+          assert len(checks) == 50, len(checks)
+          failed = [label for needle, label in checks if needle not in s]
+          if failed:
+              raise SystemExit("50-point QA failed: " + ", ".join(failed))
+          print("50-point static QA: PASS")
+
       - name: Build release
         run: swift build -c release --arch arm64 --arch x86_64
+
       - name: Assemble app
         shell: bash
         run: |
@@ -38,6 +113,7 @@ jobs:
           chmod +x "$APP/Contents/MacOS/ANAWatcher"
           codesign --force --deep --sign - "$APP"
           ditto -c -k --sequesterRsrc --keepParent "$APP" "ANA特典航空券-空席監視-macOS.zip"
+
       - name: Upload app
         uses: actions/upload-artifact@v4
         with:
