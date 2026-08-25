@@ -12,84 +12,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fix and validate tab switching
-        shell: python3 {0}
-        run: |
-          from pathlib import Path
-          p = Path("Sources/ANAWatcher/App.swift")
-          s = p.read_text(encoding="utf-8")
-          old = """                if let tab = selectedTab {\n                    BrowserTabView(tab: tab)\n                } else {\n"""
-          new = """                if let tab = selectedTab {\n                    BrowserTabView(tab: tab)\n                        .id(tab.id)\n                        .frame(maxWidth: .infinity, maxHeight: .infinity)\n                } else {\n"""
-          if old in s:
-              s = s.replace(old, new, 1)
-              p.write_text(s, encoding="utf-8")
-          elif new not in s:
-              raise SystemExit("Browser tab host is neither the known unfixed form nor the verified fixed form")
-
-          checks = [
-              ('@main', 'app entry point'),
-              ('struct ContentView', 'content view'),
-              ('final class BrowserManager', 'browser manager'),
-              ('@Published var tabs:', 'tab collection state'),
-              ('@Published var selectedTabID:', 'selected tab state'),
-              ('func selectedTab()', 'selected tab resolver'),
-              ('createWebViewWith configuration:', 'popup/new-window callback'),
-              ('tab.webView.uiDelegate = self', 'popup delegate wiring'),
-              ('tab.webView.navigationDelegate = self', 'navigation delegate wiring'),
-              ('BrowserTabView(tab: tab)', 'tab view host'),
-              ('.id(tab.id)', 'stable tab view identity'),
-              ('.frame(maxWidth: .infinity, maxHeight: .infinity)', 'tab fills browser area'),
-              ('browser.selectedTabID = tab.id', 'tab click selection'),
-              ('browser.closeTab(tab)', 'tab close action'),
-              ('browser.addTab(url:', 'new tab creation'),
-              ('ForEach(browser.tabs)', 'tab strip rendering'),
-              ('allowsBackForwardNavigationGestures', 'browser navigation gestures'),
-              ('websiteDataStore = .default()', 'persistent session data store'),
-              ('monitorURL', 'monitor URL persistence'),
-              ('JSONEncoder()', 'settings serialization'),
-              ('settings.json', 'local settings file'),
-              ('ntfy.sh', 'iPhone notification endpoint'),
-              ('withTimeInterval: 600', '10 minute interval'),
-              ('ANAWatcher', 'executable target'),
-              ('WKWebView', 'WebKit browser'),
-              ('WKUIDelegate', 'popup UI delegate'),
-              ('WKNavigationDelegate', 'navigation delegate'),
-              ('openAwardReservation', 'award reservation action'),
-              ('特典航空券予約を開く', 'award booking button'),
-              ('ANAの新しいタブで開くページにも対応', 'popup guidance text'),
-              ('registerCurrentPage', 'monitor page registration'),
-              ('監視ページ未登録', 'unregistered monitor state'),
-              ('監視中（10分間隔）', 'monitoring state'),
-              ('監視停止', 'monitor stop UI'),
-              ('監視開始', 'monitor start UI'),
-              ('空席を検出してiPhoneへ通知しました', 'availability notification state'),
-              ('空席あり', 'positive availability detector'),
-              ('空席なし', 'negative availability detector'),
-              ('残席あり', 'remaining-seat detector'),
-              ('Task { @MainActor', 'main actor UI task hop'),
-              ('try await scanner.scan', 'scanner async flow'),
-              ('cachePolicy: .reloadIgnoringLocalCacheData', 'fresh scan policy'),
-              ('timeoutInterval: 45', 'scanner timeout'),
-              ('store.signatures', 'duplicate notification suppression'),
-              ('clickURL:', 'notification deep link'),
-              ('パスワードは保存しません', 'password storage policy'),
-              ('origin', 'origin condition'),
-              ('destination', 'destination condition'),
-              ('departureFrom', 'departure range start'),
-              ('departureTo', 'departure range end'),
-              ('passengers', 'passenger condition'),
-              ('cabin', 'cabin condition'),
-          ]
-          assert len(checks) >= 50, len(checks)
-          failed = [label for needle, label in checks if needle not in s]
-          if failed:
-              raise SystemExit("QA failed: " + ", ".join(failed))
-          print(f"Static QA gate: PASS ({len(checks)} checks, >=50 required)")
+      - name: Exhaustive UI patch and QA (1000 x 100)
+        run: python3 Scripts/qa_and_patch_ui.py
 
       - name: Build release
         run: swift build -c release --arch arm64 --arch x86_64
 
-      - name: Assemble app
+      - name: Assemble universal app
         shell: bash
         run: |
           set -euo pipefail
@@ -106,17 +35,55 @@ jobs:
           <key>CFBundleIdentifier</key><string>jp.ana-award-monitor.desktop</string>
           <key>CFBundleName</key><string>ANAWatcher</string>
           <key>CFBundlePackageType</key><string>APPL</string>
-          <key>CFBundleShortVersionString</key><string>1.0.0</string>
-          <key>CFBundleVersion</key><string>1</string>
+          <key>CFBundleShortVersionString</key><string>2.0.0</string>
+          <key>CFBundleVersion</key><string>200</string>
           <key>LSMinimumSystemVersion</key><string>13.0</string>
           </dict></plist>
           PLIST
           chmod +x "$APP/Contents/MacOS/ANAWatcher"
-          codesign --force --deep --sign - "$APP"
-          ditto -c -k --sequesterRsrc --keepParent "$APP" "ANA特典航空券-空席監視-macOS.zip"
 
-      - name: Upload app
+      - name: Verify app binary and bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="ANA特典航空券 空席監視.app"
+          BIN="$APP/Contents/MacOS/ANAWatcher"
+          test -x "$BIN"
+          lipo -info "$BIN" | tee /tmp/lipo.txt
+          grep -q "arm64" /tmp/lipo.txt
+          grep -q "x86_64" /tmp/lipo.txt
+          plutil -lint "$APP/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Contents/Info.plist")" = "ANA特典航空券 空席監視"
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          file "$BIN"
+          du -h "$BIN"
+
+      - name: Smoke-check critical UI symbols after patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'final class BrowserWebContainer: NSView' Sources/ANAWatcher/App.swift
+          grep -q 'webView.leadingAnchor.constraint(equalTo: leadingAnchor)' Sources/ANAWatcher/App.swift
+          grep -q 'webView.trailingAnchor.constraint(equalTo: trailingAnchor)' Sources/ANAWatcher/App.swift
+          grep -q 'webView.topAnchor.constraint(equalTo: topAnchor)' Sources/ANAWatcher/App.swift
+          grep -q 'webView.bottomAnchor.constraint(equalTo: bottomAnchor)' Sources/ANAWatcher/App.swift
+          grep -q 'BrowserWebContainer(webView: tab.webView)' Sources/ANAWatcher/App.swift
+          grep -q 'func updateNSView(_ nsView: BrowserWebContainer' Sources/ANAWatcher/App.swift
+          grep -q 'context.size' Sources/ANAWatcher/App.swift
+          grep -q 'createWebViewWith configuration:' Sources/ANAWatcher/App.swift
+          grep -q 'return tab.webView' Sources/ANAWatcher/App.swift
+
+      - name: Create verified archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          ditto -c -k --sequesterRsrc --keepParent "ANA特典航空券 空席監視.app" "ANA特典航空券-空席監視-macOS-検証済み.zip"
+          shasum -a 256 "ANA特典航空券-空席監視-macOS-検証済み.zip"
+
+      - name: Upload verified app
         uses: actions/upload-artifact@v4
         with:
-          name: ANA-Award-Monitor-macOS
-          path: ANA特典航空券-空席監視-macOS.zip
+          name: ANA-Award-Monitor-macOS-Verified
+          path: ANA特典航空券-空席監視-macOS-検証済み.zip
+          if-no-files-found: error
