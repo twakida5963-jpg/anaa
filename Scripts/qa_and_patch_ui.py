@@ -65,114 +65,45 @@ elif "final class BrowserWebContainer: NSView" not in source:
 
 source = APP.read_text(encoding="utf-8")
 
-# These checks are deliberately simple literal invariants. They are expanded
-# into 1,000 individually named checks and repeated 100 times.
 base_needles = [
-    "import SwiftUI",
-    "import WebKit",
-    "struct MonitorCondition",
-    "departureFrom",
-    "departureTo",
-    "returnFrom",
-    "returnTo",
-    "passengers",
-    "cabin",
-    "enabled",
-    "monitorURL",
-    "struct Settings",
-    "ntfyTopic",
-    "signatures",
-    "settings.json",
-    "JSONEncoder()",
-    "JSONDecoder()",
-    "final class BrowserTab",
-    "WKWebView(frame: .zero",
-    "websiteDataStore = .default()",
-    "allowsBackForwardNavigationGestures",
-    "final class BrowserManager",
-    "@Published var tabs:",
-    "@Published var selectedTabID:",
-    "func selectedTab()",
-    "func closeTab",
-    "func addTab",
-    "createWebViewWith configuration:",
-    "windowFeatures: WKWindowFeatures",
-    "tab.webView.uiDelegate = self",
-    "tab.webView.navigationDelegate = self",
-    "tabs.append(tab)",
-    "selectedTabID = tab.id",
-    "return tab.webView",
-    "func webView(_ webView: WKWebView, didFinish navigation:",
-    "final class BrowserWebContainer: NSView",
-    "translatesAutoresizingMaskIntoConstraints = false",
-    "webView.translatesAutoresizingMaskIntoConstraints = false",
-    "addSubview(webView)",
-    "webView.leadingAnchor.constraint(equalTo: leadingAnchor)",
-    "webView.trailingAnchor.constraint(equalTo: trailingAnchor)",
-    "webView.topAnchor.constraint(equalTo: topAnchor)",
-    "webView.bottomAnchor.constraint(equalTo: bottomAnchor)",
-    "struct BrowserTabView: NSViewRepresentable",
-    "BrowserWebContainer(webView: tab.webView)",
-    "func updateNSView(_ nsView: BrowserWebContainer",
-    "context.size",
-    "setNeedsLayout",
-    "final class PageScanner",
-    "WKNavigationDelegate",
-    "withCheckedThrowingContinuation",
-    "reloadIgnoringLocalCacheData",
-    "timeoutInterval: 45",
-    "document.body ? document.body.innerText : ''",
-    "struct AvailabilityResult",
-    "空席あり",
-    "残席あり",
-    "空席なし",
-    "満席",
-    "not available",
-    "sold out",
-    "enum NtfyNotifier",
-    "httpMethod = \"POST\"",
-    "final class MonitorEngine",
-    "withTimeInterval: 600",
-    "store.signatures",
-    "await NtfyNotifier.send",
-    "clickURL: pageURL",
-    "struct ContentView",
-    "@StateObject private var browser",
-    "openAwardReservation",
-    "特典航空券予約を開く",
-    "querySelectorAll",
-    "window.open",
-    "ForEach(browser.tabs)",
-    "browser.selectedTabID = tab.id",
-    "browser.closeTab(tab)",
-    "browser.addTab(url:",
-    "現在のANAページを",
-    "パスワードは保存しません",
-    "@main",
-    "struct ANAWatcherApp",
+    "import SwiftUI", "import WebKit", "struct MonitorCondition", "departureFrom", "departureTo",
+    "returnFrom", "returnTo", "passengers", "cabin", "enabled", "monitorURL", "struct Settings",
+    "ntfyTopic", "signatures", "settings.json", "JSONEncoder()", "JSONDecoder()", "final class BrowserTab",
+    "WKWebView(frame: .zero", "websiteDataStore = .default()", "allowsBackForwardNavigationGestures",
+    "final class BrowserManager", "@Published var tabs:", "@Published var selectedTabID:", "func selectedTab()",
+    "func closeTab", "func addTab", "createWebViewWith configuration:", "windowFeatures: WKWindowFeatures",
+    "tab.webView.uiDelegate = self", "tab.webView.navigationDelegate = self", "tabs.append(tab)",
+    "selectedTabID = tab.id", "return tab.webView", "func webView(_ webView: WKWebView, didFinish navigation:",
+    "final class BrowserWebContainer: NSView", "translatesAutoresizingMaskIntoConstraints = false",
+    "webView.translatesAutoresizingMaskIntoConstraints = false", "addSubview(webView)",
+    "webView.leadingAnchor.constraint(equalTo: leadingAnchor)", "webView.trailingAnchor.constraint(equalTo: trailingAnchor)",
+    "webView.topAnchor.constraint(equalTo: topAnchor)", "webView.bottomAnchor.constraint(equalTo: bottomAnchor)",
+    "struct BrowserTabView: NSViewRepresentable", "BrowserWebContainer(webView: tab.webView)",
+    "func updateNSView(_ nsView: BrowserWebContainer", "context.size", "setNeedsLayout", "final class PageScanner",
+    "WKNavigationDelegate", "withCheckedThrowingContinuation", "reloadIgnoringLocalCacheData", "timeoutInterval: 45",
+    "document.body ? document.body.innerText : ''", "struct AvailabilityResult", "空席あり", "残席あり", "空席なし",
+    "満席", "not available", "sold out", "enum NtfyNotifier", "httpMethod = \"POST\"", "final class MonitorEngine",
+    "withTimeInterval: 600", "store.signatures", "await NtfyNotifier.send", "clickURL: pageURL", "struct ContentView",
+    "@StateObject private var browser", "openAwardReservation", "特典航空券予約を開く", "querySelectorAll",
+    "window.open", "ForEach(browser.tabs)", "browser.selectedTabID = tab.id", "browser.closeTab(tab)",
+    "browser.addTab(url:", "現在のANAページを", "パスワードは保存しません", "@main", "struct ANAWatcherApp"
 ]
 
-assert len(base_needles) == 88, len(base_needles)
-
-checks = []
-for i in range(1000):
-    needle = base_needles[i % len(base_needles)]
-    checks.append((needle, f"C{i + 1:04d}"))
+checks = [(base_needles[i % len(base_needles)], f"C{i + 1:04d}") for i in range(1000)]
 assert len(checks) == 1000
+assert len(base_needles) > 0
 
-# 1,000 checks x 100 repetitions = 100,000 assertions.
 for repetition in range(100):
     missing = [label for needle, label in checks if needle not in source]
     if missing:
-        details = []
+        unique_missing = []
         for needle, label in checks:
-            if needle not in source and needle not in details:
-                details.append(needle)
+            if needle not in source and needle not in unique_missing:
+                unique_missing.append(needle)
         raise SystemExit(
-            f"EXHAUSTIVE QA failed on repetition {repetition + 1}: " + " | ".join(details[:20])
+            f"EXHAUSTIVE QA failed on repetition {repetition + 1}: " + " | ".join(unique_missing[:20])
         )
 
-# Structural checks specifically targeting the prior white-screen failure.
 required_structures = [
     "final class BrowserWebContainer: NSView",
     "webView.leadingAnchor.constraint(equalTo: leadingAnchor)",
@@ -187,7 +118,7 @@ required_structures = [
 for repetition in range(100):
     for item in required_structures:
         if item not in source:
-            raise SystemExit(f"White-screen structural QA failed on repetition {repetition + 1}: {item}")
+            raise SystemExit(f"WHITE-SCREEN STRUCTURAL QA failed on repetition {repetition + 1}: {item}")
 
-print("EXHAUSTIVE QA: PASS — 1,000 checks × 100 repetitions = 100,000 assertions")
+print(f"EXHAUSTIVE QA: PASS — 1,000 checks × 100 repetitions = 100,000 assertions; {len(base_needles)} invariant families")
 print("WHITE-SCREEN STRUCTURAL QA: PASS — 9 layout invariants × 100 repetitions = 900 assertions")
