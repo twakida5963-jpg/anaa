@@ -1,6 +1,5 @@
 import SwiftUI
 import WebKit
-import UserNotifications
 
 struct MonitorCondition: Identifiable, Codable, Equatable {
     var id = UUID()
@@ -31,86 +30,53 @@ final class Store: ObservableObject {
     @Published var ntfyTopic: String
     @Published var lastScan = "未実行"
     @Published var lastAvailabilitySignatures: [String: String] = [:]
-
     private let settingsURL: URL
 
     init() {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("ANAWatcher", isDirectory: true)
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("ANAWatcher", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         settingsURL = dir.appendingPathComponent("settings.json")
-
         var topic = ""
-        if let data = try? Data(contentsOf: settingsURL),
-           let saved = try? JSONDecoder().decode(Settings.self, from: data) {
+        if let data = try? Data(contentsOf: settingsURL), let saved = try? JSONDecoder().decode(Settings.self, from: data) {
             conditions = saved.conditions
             topic = saved.ntfyTopic
             lastAvailabilitySignatures = saved.lastAvailabilitySignatures
         }
-        if topic.isEmpty {
-            topic = "ana-award-" + UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
-        }
-        ntfyTopic = topic
+        ntfyTopic = topic.isEmpty ? "ana-award-" + UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "") : topic
         save()
     }
 
     func save() {
-        let saved = Settings(conditions: conditions, ntfyTopic: ntfyTopic, lastAvailabilitySignatures: lastAvailabilitySignatures)
-        if let data = try? JSONEncoder().encode(saved) {
-            try? data.write(to: settingsURL, options: .atomic)
-        }
+        let s = Settings(conditions: conditions, ntfyTopic: ntfyTopic, lastAvailabilitySignatures: lastAvailabilitySignatures)
+        if let data = try? JSONEncoder().encode(s) { try? data.write(to: settingsURL, options: .atomic) }
     }
 
-    func add() {
-        conditions.append(MonitorCondition())
-        save()
-    }
-
-    func remove(_ id: UUID) {
-        conditions.removeAll { $0.id == id }
-        lastAvailabilitySignatures.removeValue(forKey: id.uuidString)
-        save()
-    }
+    func add() { conditions.append(MonitorCondition()); save() }
+    func remove(_ id: UUID) { conditions.removeAll { $0.id == id }; lastAvailabilitySignatures.removeValue(forKey: id.uuidString); save() }
 
     func registerCurrentPage(_ webView: WKWebView, for id: UUID) {
-        guard let url = webView.url?.absoluteString, !url.isEmpty else {
-            status = "ANAのページを開いてから登録してください"
-            return
-        }
-        if let index = conditions.firstIndex(where: { $0.id == id }) {
-            conditions[index].monitorURL = url
+        guard let url = webView.url?.absoluteString, !url.isEmpty else { status = "ANAのページを開いてから登録してください"; return }
+        if let i = conditions.firstIndex(where: { $0.id == id }) {
+            conditions[i].monitorURL = url
             status = "監視ページを登録しました"
             save()
         }
     }
 
-    func start() {
-        monitoring = true
-        status = "監視中（10分間隔）"
-    }
-
-    func stop() {
-        monitoring = false
-        status = "停止中"
-    }
+    func start() { monitoring = true; status = "監視中（10分間隔）" }
+    func stop() { monitoring = false; status = "停止中" }
 }
 
 struct ANAWebView: NSViewRepresentable {
     let webView: WKWebView
-
     func makeNSView(context: Context) -> WKWebView {
-        webView.configuration.preferences.isElementFullscreenEnabled = true
         webView.load(URLRequest(url: URL(string: "https://www.ana.co.jp/ja/jp/guide/amc/award/")!))
         return webView
     }
-
     func updateNSView(_ nsView: WKWebView, context: Context) {}
 }
 
-struct PageSnapshot {
-    let url: String
-    let text: String
-}
+struct PageSnapshot { let url: String; let text: String }
 
 @MainActor
 final class PageScanner: NSObject, WKNavigationDelegate {
@@ -128,8 +94,8 @@ final class PageScanner: NSObject, WKNavigationDelegate {
 
     func scan(url: URL) async throws -> PageSnapshot {
         timeoutTask?.cancel()
-        return try await withCheckedThrowingContinuation { continuation in
-            self.continuation = continuation
+        return try await withCheckedThrowingContinuation { c in
+            continuation = c
             webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 45))
             timeoutTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(45))
@@ -141,25 +107,18 @@ final class PageScanner: NSObject, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         webView.evaluateJavaScript("document.body ? document.body.innerText : '';" ) { [weak self] result, error in
-            if let error {
-                self?.finish(.failure(error))
-            } else {
-                let text = result as? String ?? ""
-                self?.finish(.success(PageSnapshot(url: webView.url?.absoluteString ?? "", text: text)))
-            }
+            if let error { self?.finish(.failure(error)); return }
+            self?.finish(.success(PageSnapshot(url: webView.url?.absoluteString ?? "", text: result as? String ?? "")))
         }
     }
 
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        finish(.failure(error))
-    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finish(.failure(error)) }
 
     private func finish(_ result: Result<PageSnapshot, Error>) {
-        timeoutTask?.cancel()
-        timeoutTask = nil
-        guard let continuation else { return }
-        self.continuation = nil
-        continuation.resume(with: result)
+        timeoutTask?.cancel(); timeoutTask = nil
+        guard let c = continuation else { return }
+        continuation = nil
+        c.resume(with: result)
     }
 
     enum ScanError: LocalizedError {
@@ -176,18 +135,17 @@ struct AvailabilityResult {
 
 func detectAvailability(in text: String) -> AvailabilityResult {
     let normalized = text.replacingOccurrences(of: "\r", with: "\n")
-    let availablePatterns = ["空席あり", "残席あり", "空席：あり", "空席:あり", "available", "seats available"]
-    let unavailablePatterns = ["空席なし", "満席", "設定なし", "受付終了", "not available", "sold out"]
+    let yes = ["空席あり", "残席あり", "空席：あり", "空席:あり", "available", "seats available"]
+    let no = ["空席なし", "満席", "設定なし", "受付終了", "not available", "sold out"]
     let lower = normalized.lowercased()
-    let foundAvailable = availablePatterns.contains { lower.contains($0.lowercased()) }
-    let foundUnavailable = unavailablePatterns.contains { lower.contains($0.lowercased()) }
-    let lines = normalized.split(separator: "\n").map(String.init)
-    let details = lines.filter { line in availablePatterns.contains { line.lowercased().contains($0.lowercased()) } }
-    if foundAvailable && !foundUnavailable {
-        let detail = details.joined(separator: " | ")
-        return AvailabilityResult(true, detail, detail)
+    let hasYes = yes.contains { lower.contains($0.lowercased()) }
+    let hasNo = no.contains { lower.contains($0.lowercased()) }
+    let details = normalized.split(separator: "\n").map(String.init).filter { line in yes.contains { line.lowercased().contains($0.lowercased()) } }
+    if hasYes && !hasNo {
+        let d = details.joined(separator: " | ")
+        return AvailabilityResult(available: true, signature: d, detail: d)
     }
-    return AvailabilityResult(false, "", "空席ありを示す明確な表示は検出されませんでした")
+    return AvailabilityResult(available: false, signature: "", detail: "空席ありを示す明確な表示は検出されませんでした")
 }
 
 @MainActor
@@ -196,22 +154,17 @@ final class MonitorEngine: ObservableObject {
     private let scanner = PageScanner()
     private var timer: Timer?
 
-    init(store: Store) {
-        self.store = store
-    }
+    init(store: Store) { self.store = store }
 
     func start() {
         stop()
         scanNow()
         timer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in
-            self?.scanNow()
+            Task { @MainActor in self?.scanNow() }
         }
     }
 
-    func stop() {
-        timer?.invalidate()
-        timer = nil
-    }
+    func stop() { timer?.invalidate(); timer = nil }
 
     private func scanNow() {
         guard store.monitoring else { return }
@@ -227,17 +180,12 @@ final class MonitorEngine: ObservableObject {
                 guard let url = URL(string: condition.monitorURL) else { continue }
                 do {
                     let page = try await scanner.scan(url: url)
-                    let result = detectAvailability(in: page.text)
+                    let r = detectAvailability(in: page.text)
                     let key = condition.id.uuidString
                     let previous = store.lastAvailabilitySignatures[key] ?? ""
-                    if result.available && result.signature != previous {
-                        await NtfyNotifier.send(
-                            topic: store.ntfyTopic,
-                            title: "✈️ ANA特典航空券 空席発生",
-                            message: "\(condition.origin) → \(condition.destination)\n\(condition.cabin) / \(condition.passengers)名\n\(result.detail)",
-                            clickURL: page.url
-                        )
-                        store.lastAvailabilitySignatures[key] = result.signature
+                    if r.available && r.signature != previous {
+                        await NtfyNotifier.send(topic: store.ntfyTopic, title: "✈️ ANA特典航空券 空席発生", message: "\(condition.origin) → \(condition.destination)\n\(condition.cabin) / \(condition.passengers)名\n\(r.detail)", clickURL: page.url)
+                        store.lastAvailabilitySignatures[key] = r.signature
                         store.status = "空席を検出してiPhoneへ通知しました"
                     } else {
                         store.status = "確認済み：空席発生なし"
@@ -285,27 +233,19 @@ struct ContentView: View {
                     Text("最終確認: \(store.lastScan)").font(.caption2).foregroundStyle(.secondary)
                 }
                 Section("監視条件") {
-                    if store.conditions.isEmpty {
-                        Text("監視条件を追加してください").foregroundStyle(.secondary)
-                    }
+                    if store.conditions.isEmpty { Text("監視条件を追加してください").foregroundStyle(.secondary) }
                     ForEach(store.conditions) { condition in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(condition.name).font(.headline)
                             Text("\(condition.origin) → \(condition.destination)")
                             Text("\(condition.cabin) / \(condition.passengers)名").font(.caption).foregroundStyle(.secondary)
-                            Text(condition.monitorURL.isEmpty ? "監視ページ未登録" : "監視ページ登録済み")
-                                .font(.caption2)
-                                .foregroundStyle(condition.monitorURL.isEmpty ? .orange : .green)
+                            Text(condition.monitorURL.isEmpty ? "監視ページ未登録" : "監視ページ登録済み").font(.caption2).foregroundStyle(condition.monitorURL.isEmpty ? .orange : .green)
                         }
                         .swipeActions {
-                            Button(role: .destructive) { store.remove(condition.id) } label: {
-                                Label("削除", systemImage: "trash")
-                            }
+                            Button(role: .destructive) { store.remove(condition.id) } label: { Label("削除", systemImage: "trash") }
                         }
                     }
-                    Button { store.add() } label: {
-                        Label("監視条件を追加", systemImage: "plus")
-                    }
+                    Button { store.add() } label: { Label("監視条件を追加", systemImage: "plus") }
                 }
             }
             .navigationTitle("ANA特典航空券")
@@ -318,28 +258,18 @@ struct ContentView: View {
                     }
                     Spacer()
                     Button(store.monitoring ? "監視停止" : "監視開始") {
-                        if store.monitoring {
-                            store.stop(); monitor.stop()
-                        } else {
-                            store.start(); monitor.start()
-                        }
+                        if store.monitoring { store.stop(); monitor.stop() } else { store.start(); monitor.start() }
                     }
                     .buttonStyle(.borderedProminent)
                 }
-
                 HStack {
                     ForEach(store.conditions) { condition in
-                        Button("現在のANAページを「\(condition.name)」に登録") {
-                            store.registerCurrentPage(webView, for: condition.id)
-                        }
-                        .font(.caption)
+                        Button("現在のANAページを「\(condition.name)」に登録") { store.registerCurrentPage(webView, for: condition.id) }
+                            .font(.caption)
                     }
                     Spacer()
                 }
-
-                ANAWebView(webView: webView)
-                    .frame(minHeight: 520)
-
+                ANAWebView(webView: webView).frame(minHeight: 520)
                 HStack {
                     Text("iPhone通知トピック:").font(.caption).foregroundStyle(.secondary)
                     Text(store.ntfyTopic).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
@@ -355,7 +285,5 @@ struct ContentView: View {
 
 @main
 struct ANAWatcherApp: App {
-    var body: some Scene {
-        WindowGroup { ContentView() }
-    }
+    var body: some Scene { WindowGroup { ContentView() } }
 }
