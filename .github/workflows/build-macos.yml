@@ -12,20 +12,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fix and validate tab switching
+      - name: Static QA gate
         shell: python3 {0}
         run: |
           from pathlib import Path
           p = Path("Sources/ANAWatcher/App.swift")
           s = p.read_text(encoding="utf-8")
-          old = """                if let tab = selectedTab {\n                    BrowserTabView(tab: tab)\n                } else {\n"""
-          new = """                if let tab = selectedTab {\n                    BrowserTabView(tab: tab)\n                        .id(tab.id)\n                        .frame(maxWidth: .infinity, maxHeight: .infinity)\n                } else {\n"""
-          if old not in s:
-              raise SystemExit("Expected tab-view block was not found; refusing to build")
-          s = s.replace(old, new, 1)
-          p.write_text(s, encoding="utf-8")
 
-          checks = [
+          required = [
               ('@main', 'app entry point'),
               ('struct ContentView', 'content view'),
               ('final class BrowserManager', 'browser manager'),
@@ -79,11 +73,21 @@ jobs:
               ('passengers', 'passenger condition'),
               ('cabin', 'cabin condition'),
           ]
-          assert len(checks) >= 50, len(checks)
-          failed = [label for needle, label in checks if needle not in s]
+          assert len(required) >= 50, len(required)
+          failed = [label for needle, label in required if needle not in s]
           if failed:
-              raise SystemExit("QA failed: " + ", ".join(failed))
-          print(f"Static QA gate: PASS ({len(checks)} checks, >=50 required)")
+              raise SystemExit("Static QA failed: " + ", ".join(failed))
+
+          exact_tab_block = '''                if let tab = selectedTab {
+                    BrowserTabView(tab: tab)
+                        .id(tab.id)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+'''
+          if exact_tab_block not in s:
+              raise SystemExit("Static QA failed: browser tab host is not in the verified stable form")
+
+          print(f"Static QA gate: PASS ({len(required)} checks + tab-host structural check)")
 
       - name: Build release
         run: swift build -c release --arch arm64 --arch x86_64
