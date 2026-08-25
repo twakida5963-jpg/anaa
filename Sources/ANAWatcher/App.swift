@@ -31,23 +31,18 @@ final class Store: ObservableObject {
     @Published var lastScan = "未実行"
     @Published var ntfyTopic = ""
     @Published var signatures: [String: String] = [:]
-
     private let settingsURL: URL
 
     init() {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("ANAWatcher", isDirectory: true)
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("ANAWatcher", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         settingsURL = dir.appendingPathComponent("settings.json")
-        if let data = try? Data(contentsOf: settingsURL),
-           let saved = try? JSONDecoder().decode(Settings.self, from: data) {
+        if let data = try? Data(contentsOf: settingsURL), let saved = try? JSONDecoder().decode(Settings.self, from: data) {
             conditions = saved.conditions
             ntfyTopic = saved.ntfyTopic
             signatures = saved.signatures
         }
-        if ntfyTopic.isEmpty {
-            ntfyTopic = "ana-award-" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-        }
+        if ntfyTopic.isEmpty { ntfyTopic = "ana-award-" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased() }
         save()
     }
 
@@ -55,20 +50,10 @@ final class Store: ObservableObject {
         let saved = Settings(conditions: conditions, ntfyTopic: ntfyTopic, signatures: signatures)
         if let data = try? JSONEncoder().encode(saved) { try? data.write(to: settingsURL, options: .atomic) }
     }
-
     func addCondition() { conditions.append(MonitorCondition()); save() }
-
-    func removeCondition(_ id: UUID) {
-        conditions.removeAll { $0.id == id }
-        signatures.removeValue(forKey: id.uuidString)
-        save()
-    }
-
+    func removeCondition(_ id: UUID) { conditions.removeAll { $0.id == id }; signatures.removeValue(forKey: id.uuidString); save() }
     func registerCurrentPage(_ webView: WKWebView, for id: UUID) {
-        guard let url = webView.url?.absoluteString, !url.isEmpty else {
-            status = "ANAの検索結果ページを開いてから登録してください"
-            return
-        }
+        guard let url = webView.url?.absoluteString, !url.isEmpty else { status = "ANAの検索結果ページを開いてから登録してください"; return }
         guard let index = conditions.firstIndex(where: { $0.id == id }) else { return }
         conditions[index].monitorURL = url
         status = "監視ページを登録しました"
@@ -80,14 +65,11 @@ final class Store: ObservableObject {
 final class BrowserTab: ObservableObject, Identifiable {
     let id = UUID()
     let webView: WKWebView
-    @Published var title: String = "ANA"
-
-    init(initialURL: URL) {
-        let config = WKWebViewConfiguration()
-        config.websiteDataStore = .default()
-        webView = WKWebView(frame: .zero, configuration: config)
+    @Published var title = "ANA"
+    init(configuration: WKWebViewConfiguration, request: URLRequest? = nil) {
+        webView = WKWebView(frame: .zero, configuration: configuration)
         webView.allowsBackForwardNavigationGestures = true
-        webView.load(URLRequest(url: initialURL))
+        if let request { webView.load(request) }
     }
 }
 
@@ -95,14 +77,20 @@ final class BrowserTab: ObservableObject, Identifiable {
 final class BrowserManager: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
     @Published var tabs: [BrowserTab] = []
     @Published var selectedTabID: UUID?
+    private let sharedProcessPool = WKProcessPool()
 
-    override init() {
-        super.init()
-        addTab(url: URL(string: "https://www.ana.co.jp/ja/jp/")!)
+    override init() { super.init(); openInitialTab() }
+
+    private func makeConfiguration(from base: WKWebViewConfiguration? = nil) -> WKWebViewConfiguration {
+        let config = base ?? WKWebViewConfiguration()
+        config.websiteDataStore = .default()
+        config.processPool = sharedProcessPool
+        return config
     }
 
-    func addTab(url: URL) -> BrowserTab {
-        let tab = BrowserTab(initialURL: url)
+    @discardableResult
+    func addTab(request: URLRequest? = nil, configuration: WKWebViewConfiguration? = nil) -> BrowserTab {
+        let tab = BrowserTab(configuration: makeConfiguration(from: configuration), request: request)
         tab.webView.navigationDelegate = self
         tab.webView.uiDelegate = self
         tabs.append(tab)
@@ -110,36 +98,33 @@ final class BrowserManager: NSObject, ObservableObject, WKNavigationDelegate, WK
         return tab
     }
 
+    func openInitialTab() { addTab(request: URLRequest(url: URL(string: "https://www.ana.co.jp/ja/jp/")!)) }
+    func selectedTab() -> BrowserTab? { guard let selectedTabID else { return tabs.first }; return tabs.first(where: { $0.id == selectedTabID }) ?? tabs.first }
     func close(tab: BrowserTab) {
-        tabs.removeAll { $0.id == tab.id }
-        if tabs.isEmpty {
-            addTab(url: URL(string: "https://www.ana.co.jp/ja/jp/")!)
-        } else if selectedTabID == tab.id {
-            selectedTabID = tabs.last?.id
-        }
+        let id = tab.id
+        tabs.removeAll { $0.id == id }
+        if tabs.isEmpty { openInitialTab() } else if selectedTabID == id { selectedTabID = tabs.last?.id }
     }
-
-    func selectedTab() -> BrowserTab? {
-        guard let selectedTabID else { return tabs.first }
-        return tabs.first(where: { $0.id == selectedTabID }) ?? tabs.first
-    }
+    func newBlankTab() { _ = addTab() }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if let tab = tabs.first(where: { $0.webView === webView }), let title = webView.title, !title.isEmpty {
-            tab.title = title
-        }
+        if let tab = tabs.first(where: { $0.webView === webView }) { tab.title = (webView.title?.isEmpty == false ? webView.title! : "ANA") }
     }
 
-    func webView(_ webView: WKWebView,
-                 createWebViewWith configuration: WKWebViewConfiguration,
-                 for navigationAction: WKNavigationAction,
-                 windowFeatures: WKWindowFeatures) -> WKWebView? {
-        let newTab = BrowserTab(initialURL: URL(string: "about:blank")!)
-        newTab.webView.navigationDelegate = self
-        newTab.webView.uiDelegate = self
-        tabs.append(newTab)
-        selectedTabID = newTab.id
-        return newTab.webView
+    // Handles <a target="_blank"> and window.open().
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        let tab = addTab(request: navigationAction.request, configuration: configuration)
+        return tab.webView
+    }
+
+    // Fallback for pages that use a navigation action with no target frame.
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if navigationAction.targetFrame == nil {
+            _ = addTab(request: navigationAction.request, configuration: webView.configuration)
+            decisionHandler(.cancel)
+        } else {
+            decisionHandler(.allow)
+        }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {}
@@ -147,7 +132,6 @@ final class BrowserManager: NSObject, ObservableObject, WKNavigationDelegate, WK
 
 struct BrowserTabView: NSViewRepresentable {
     let tab: BrowserTab
-
     func makeNSView(context: Context) -> WKWebView { tab.webView }
     func updateNSView(_ nsView: WKWebView, context: Context) {}
 }
@@ -178,31 +162,23 @@ final class PageScanner: NSObject, WKNavigationDelegate {
             }
         }
     }
-
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         webView.evaluateJavaScript("document.body ? document.body.innerText : ''") { [weak self] result, error in
             if let error { self?.finish(.failure(error)); return }
             self?.finish(.success((webView.url?.absoluteString ?? "", result as? String ?? "")))
         }
     }
-
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finish(.failure(error)) }
-
     private func finish(_ result: Result<(String, String), Error>) {
         timeoutTask?.cancel(); timeoutTask = nil
         guard let continuation else { return }
         self.continuation = nil
         continuation.resume(with: result)
     }
-
     enum ScanError: Error { case timeout }
 }
 
-struct AvailabilityResult {
-    let available: Bool
-    let signature: String
-    let detail: String
-}
+struct AvailabilityResult { let available: Bool; let signature: String; let detail: String }
 
 func detectAvailability(_ text: String) -> AvailabilityResult {
     let lower = text.lowercased()
@@ -211,13 +187,9 @@ func detectAvailability(_ text: String) -> AvailabilityResult {
     let hasPositive = positive.contains { lower.contains($0) }
     let hasNegative = negative.contains { lower.contains($0) }
     if hasPositive && !hasNegative {
-        let details = text.split(separator: "\n").map(String.init).filter { line in
-            positive.contains { line.lowercased().contains($0) }
-        }
-        let detail = details.joined(separator: " | ")
-        return AvailabilityResult(available: true,
-                                  signature: detail.isEmpty ? "available" : detail,
-                                  detail: detail.isEmpty ? "空席あり表示を検出しました" : detail)
+        let lines = text.split(separator: "\n").map(String.init)
+        let detail = lines.filter { line in positive.contains { line.lowercased().contains($0) } }.joined(separator: " | ")
+        return AvailabilityResult(available: true, signature: detail.isEmpty ? "available" : detail, detail: detail.isEmpty ? "空席あり表示を検出しました" : detail)
     }
     return AvailabilityResult(available: false, signature: "", detail: "空席ありを示す表示はありません")
 }
@@ -240,25 +212,15 @@ final class MonitorEngine: ObservableObject {
     private let store: Store
     private let scanner = PageScanner()
     private var timer: Timer?
-
     init(store: Store) { self.store = store }
-
     func start() {
         stop()
         store.monitoring = true
         store.status = "監視中（10分間隔）"
         scanNow()
-        timer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.scanNow() }
-        }
+        timer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in Task { @MainActor in self?.scanNow() } }
     }
-
-    func stop() {
-        timer?.invalidate(); timer = nil
-        store.monitoring = false
-        store.status = "停止中"
-    }
-
+    func stop() { timer?.invalidate(); timer = nil; store.monitoring = false; store.status = "停止中" }
     private func scanNow() {
         guard store.monitoring else { return }
         Task { @MainActor in
@@ -306,10 +268,10 @@ struct ContentView: View {
         guard let tab = browser.selectedTab() else { return }
         let js = """
         (() => {
-          const els = [...document.querySelectorAll('a,button,[role=\"button\"]')];
+          const els = [...document.querySelectorAll('a,button,[role="button"]')];
           const target = els.find(el => {
             const t = (el.innerText || el.textContent || '').replace(/\\s+/g, '');
-            return t.includes('特典航空券の新規予約') || t.includes('特典航空券予約') || t.includes('特典航空券の予約');
+            return t.includes('特典航空券の新規予約') || t.includes('特典航空券の新規予約・申し込み') || t.includes('特典航空券予約') || t.includes('特典航空券の予約');
           });
           if (target) { target.click(); return true; }
           return false;
@@ -317,9 +279,7 @@ struct ContentView: View {
         """
         tab.webView.evaluateJavaScript(js) { result, _ in
             guard !((result as? Bool) ?? false) else { return }
-            if let url = URL(string: "https://www.ana.co.jp/ja/jp/guide/amc/award/") {
-                tab.webView.load(URLRequest(url: url))
-            }
+            tab.webView.load(URLRequest(url: URL(string: "https://www.ana.co.jp/ja/jp/guide/amc/award/")!))
         }
     }
 
@@ -327,31 +287,23 @@ struct ContentView: View {
         NavigationSplitView {
             List {
                 Section("状態") {
-                    Label(store.monitoring ? "監視中・10分間隔" : "停止中",
-                          systemImage: store.monitoring ? "checkmark.circle.fill" : "pause.circle")
+                    Label(store.monitoring ? "監視中・10分間隔" : "停止中", systemImage: store.monitoring ? "checkmark.circle.fill" : "pause.circle")
                     Text(store.status).font(.caption).foregroundStyle(.secondary)
                     Text("最終確認: \(store.lastScan)").font(.caption2).foregroundStyle(.secondary)
                 }
-
                 Section("監視条件") {
                     ForEach(store.conditions) { condition in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(condition.name).font(.headline)
                             Text("\(condition.origin) → \(condition.destination)")
                             Text("\(condition.cabin) / \(condition.passengers)名").font(.caption)
-                            Text(condition.monitorURL.isEmpty ? "監視ページ未登録" : "監視ページ登録済み")
-                                .font(.caption2)
-                                .foregroundStyle(condition.monitorURL.isEmpty ? .orange : .green)
+                            Text(condition.monitorURL.isEmpty ? "監視ページ未登録" : "監視ページ登録済み").font(.caption2).foregroundStyle(condition.monitorURL.isEmpty ? .orange : .green)
                         }
                         .swipeActions {
-                            Button(role: .destructive) { store.removeCondition(condition.id) } label: {
-                                Label("削除", systemImage: "trash")
-                            }
+                            Button(role: .destructive) { store.removeCondition(condition.id) } label: { Label("削除", systemImage: "trash") }
                         }
                     }
-                    Button { store.addCondition() } label: {
-                        Label("監視条件を追加", systemImage: "plus")
-                    }
+                    Button { store.addCondition() } label: { Label("監視条件を追加", systemImage: "plus") }
                 }
             }
             .navigationTitle("ANA特典航空券")
@@ -363,75 +315,45 @@ struct ContentView: View {
                         Text("ANAの新しいタブで開くページにも対応しています。").foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("特典航空券予約を開く") { openAwardReservation() }
-                        .buttonStyle(.bordered)
-                    Button(store.monitoring ? "監視停止" : "監視開始") {
-                        if store.monitoring { engine.stop() } else { engine.start() }
-                    }
-                    .buttonStyle(.borderedProminent)
+                    Button("新しいタブ") { browser.newBlankTab() }.buttonStyle(.bordered)
+                    Button("特典航空券予約を開く") { openAwardReservation() }.buttonStyle(.bordered)
+                    Button(store.monitoring ? "監視停止" : "監視開始") { if store.monitoring { engine.stop() } else { engine.start() } }.buttonStyle(.borderedProminent)
                 }
 
                 HStack {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 4) {
                             ForEach(browser.tabs) { tab in
-                                Button {
-                                    browser.selectedTabID = tab.id
-                                } label: {
-                                    HStack(spacing: 5) {
-                                        Image(systemName: "globe")
-                                        Text(tab.title.isEmpty ? "ANA" : tab.title)
-                                            .lineLimit(1)
-                                        Button {
-                                            browser.close(tab: tab)
-                                        } label: {
-                                            Image(systemName: "xmark.circle.fill")
-                                        }
-                                        .buttonStyle(.plain)
-                                    }
-                                    .padding(.horizontal, 9)
-                                    .padding(.vertical, 5)
-                                    .background(browser.selectedTabID == tab.id ? Color.accentColor.opacity(0.12) : Color.gray.opacity(0.08))
-                                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                                HStack(spacing: 5) {
+                                    Button { browser.selectedTabID = tab.id } label: {
+                                        HStack(spacing: 5) { Image(systemName: "globe"); Text(tab.title.isEmpty ? "ANA" : tab.title).lineLimit(1) }
+                                    }.buttonStyle(.plain)
+                                    Button { browser.close(tab: tab) } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 5)
+                                .background(browser.selectedTabID == tab.id ? Color.accentColor.opacity(0.12) : Color.gray.opacity(0.08))
+                                .clipShape(RoundedRectangle(cornerRadius: 7))
                             }
-                            Button {
-                                browser.addTab(url: URL(string: "https://www.ana.co.jp/ja/jp/")!)
-                            } label: {
-                                Image(systemName: "plus")
-                                    .padding(6)
-                            }
-                            .buttonStyle(.plain)
                         }
                     }
-                    Spacer()
+                    ForEach(store.conditions) { condition in
+                        Button("現在のページを「\(condition.name)」に登録") { if let tab = browser.selectedTab() { store.registerCurrentPage(tab.webView, for: condition.id) } }.font(.caption)
+                    }
                 }
 
-                if let tab = browser.selectedTab() {
-                    HStack {
-                        ForEach(store.conditions) { condition in
-                            Button("現在のページを「\(condition.name)」に登録") {
-                                store.registerCurrentPage(tab.webView, for: condition.id)
-                            }
-                            .font(.caption)
-                        }
-                        Spacer()
-                    }
-                    BrowserTabView(tab: tab)
-                        .frame(minHeight: 520)
-                }
+                if let tab = browser.selectedTab() { BrowserTabView(tab: tab).frame(minHeight: 520) }
 
                 HStack {
                     Text("iPhone通知:").font(.caption).foregroundStyle(.secondary)
                     Text(store.ntfyTopic).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                     Spacer()
-                    Text("ANAパスワードは保存しません").font(.caption2).foregroundStyle(.secondary)
+                    Text("ANAパスワードはアプリの設定ファイルに保存しません").font(.caption2).foregroundStyle(.secondary)
                 }
             }
             .padding()
         }
-        .frame(minWidth: 1050, minHeight: 700)
+        .frame(minWidth: 1100, minHeight: 760)
     }
 }
 
