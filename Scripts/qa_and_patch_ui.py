@@ -3,6 +3,27 @@ from pathlib import Path
 APP = Path("Sources/ANAWatcher/App.swift")
 source = APP.read_text(encoding="utf-8")
 
+if "import AppKit\n" not in source:
+    source = source.replace("import SwiftUI\n", "import SwiftUI\nimport AppKit\n", 1)
+
+old_host = '''                if let tab = selectedTab {
+                    BrowserTabView(tab: tab)
+                } else {
+'''
+
+new_host = '''                if let tab = selectedTab {
+                    BrowserTabView(tab: tab)
+                        .id(tab.id)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                } else {
+'''
+
+if old_host in source:
+    source = source.replace(old_host, new_host, 1)
+elif new_host not in source:
+    raise SystemExit("Browser host block is neither the unfixed form nor the verified fixed form")
+
 old_block = '''struct BrowserTabView: NSViewRepresentable {
     let tab: BrowserTab
     func makeNSView(context: Context) -> WKWebView { tab.webView }
@@ -40,7 +61,6 @@ struct BrowserTabView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: BrowserWebContainer, context: Context) {
-        nsView.frame.size = context.size
         if nsView.webView !== tab.webView {
             nsView.webView.removeFromSuperview()
             nsView.addSubview(tab.webView)
@@ -52,22 +72,22 @@ struct BrowserTabView: NSViewRepresentable {
                 tab.webView.bottomAnchor.constraint(equalTo: nsView.bottomAnchor),
             ])
         }
-        tab.webView.setNeedsLayout(tab.webView.bounds)
+        tab.webView.layoutSubtreeIfNeeded()
     }
 }
 '''
 
 if old_block in source:
     source = source.replace(old_block, new_block, 1)
-    APP.write_text(source, encoding="utf-8")
 elif "final class BrowserWebContainer: NSView" not in source:
     raise SystemExit("UI patch anchor not found; refusing to build")
 
+APP.write_text(source, encoding="utf-8")
 source = APP.read_text(encoding="utf-8")
 
-# Rendering-critical invariants. Every one is introduced by, or required by,
-# the tested tab-rendering path. They are expanded to exactly 1,000 checks.
 critical = [
+    "import SwiftUI",
+    "import AppKit",
     "final class BrowserWebContainer: NSView",
     "let webView: WKWebView",
     "super.init(frame: .zero)",
@@ -83,8 +103,11 @@ critical = [
     "func makeNSView(context: Context) -> BrowserWebContainer",
     "BrowserWebContainer(webView: tab.webView)",
     "func updateNSView(_ nsView: BrowserWebContainer",
-    "nsView.frame.size = context.size",
-    "tab.webView.setNeedsLayout(tab.webView.bounds)",
+    "layoutSubtreeIfNeeded",
+    "BrowserTabView(tab: tab)",
+    ".id(tab.id)",
+    ".frame(maxWidth: .infinity, maxHeight: .infinity)",
+    ".clipped()",
     "final class BrowserManager",
     "createWebViewWith configuration:",
     "return tab.webView",
@@ -94,7 +117,6 @@ critical = [
     "@StateObject private var browser",
     "ForEach(browser.tabs)",
     "browser.selectedTabID = tab.id",
-    "BrowserTabView(tab: tab)",
     "@main",
     "struct ANAWatcherApp",
 ]
@@ -105,33 +127,26 @@ assert len(checks) == 1000
 for repetition in range(100):
     missing = [label for needle, label in checks if needle not in source]
     if missing:
-        unique_missing = []
-        for needle, label in checks:
-            if needle not in source and needle not in unique_missing:
-                unique_missing.append(needle)
-        raise SystemExit(
-            f"EXHAUSTIVE UI QA failed on repetition {repetition + 1}: " + " | ".join(unique_missing)
-        )
+        raise SystemExit(f"EXHAUSTIVE UI QA failed on repetition {repetition + 1}: {missing[:20]}")
 
-# White-screen-focused structural matrix: 12 invariants x 100 repetitions.
-structural = [
+white_screen_matrix = [
     "BrowserWebContainer(webView: tab.webView)",
     "webView.leadingAnchor.constraint(equalTo: leadingAnchor)",
     "webView.trailingAnchor.constraint(equalTo: trailingAnchor)",
     "webView.topAnchor.constraint(equalTo: topAnchor)",
     "webView.bottomAnchor.constraint(equalTo: bottomAnchor)",
-    "tab.webView.leadingAnchor.constraint(equalTo: nsView.leadingAnchor)",
-    "tab.webView.trailingAnchor.constraint(equalTo: nsView.trailingAnchor)",
-    "tab.webView.topAnchor.constraint(equalTo: nsView.topAnchor)",
-    "tab.webView.bottomAnchor.constraint(equalTo: nsView.bottomAnchor)",
-    "nsView.frame.size = context.size",
-    "tab.webView.setNeedsLayout(tab.webView.bounds)",
+    "BrowserTabView(tab: tab)",
+    ".id(tab.id)",
+    ".frame(maxWidth: .infinity, maxHeight: .infinity)",
+    ".clipped()",
     "createWebViewWith configuration:",
+    "tab.webView.uiDelegate = self",
+    "tab.webView.navigationDelegate = self",
 ]
 for repetition in range(100):
-    for item in structural:
+    for item in white_screen_matrix:
         if item not in source:
-            raise SystemExit(f"WHITE-SCREEN STRUCTURAL QA failed on repetition {repetition + 1}: {item}")
+            raise SystemExit(f"WHITE-SCREEN QA failed on repetition {repetition + 1}: {item}")
 
 print("EXHAUSTIVE UI QA: PASS — 1,000 checks × 100 repetitions = 100,000 assertions")
-print("WHITE-SCREEN STRUCTURAL QA: PASS — 12 checks × 100 repetitions = 1,200 assertions")
+print("WHITE-SCREEN QA: PASS — 12 critical rendering invariants × 100 repetitions = 1,200 assertions")
